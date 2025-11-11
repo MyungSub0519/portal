@@ -30,14 +30,18 @@ func main() {
 
 	// Defaults from environment
 	defaultStaticDir := os.Getenv("STATIC_DIR")
+	
 	if defaultStaticDir == "" {
 		defaultStaticDir = "./dist"
 	}
+	
 	// Parse PORTAL_UI_URL or POSTAL_FRONTEND_URL to extract portal host
 	defaultPortalHost := os.Getenv("PORTAL_UI_URL")
+	
 	if defaultPortalHost == "" {
 		defaultPortalHost = os.Getenv("POSTAL_FRONTEND_URL")
 	}
+	
 	if defaultPortalHost != "" {
 		// Extract host from URL (supports wildcard patterns like http://*.localhost:4017)
 		defaultPortalHost = strings.TrimPrefix(defaultPortalHost, "http://")
@@ -46,10 +50,13 @@ func main() {
 	} else {
 		defaultPortalHost = "localhost:4017"
 	}
+	
 	defaultBootstraps := os.Getenv("BOOTSTRAP_URIS")
+
 	if defaultBootstraps == "" {
 		defaultBootstraps = "ws://localhost:4017/relay"
 	}
+
 	var flagBootstrapsCSV string
 	flag.StringVar(&flagBootstrapsCSV, "bootstraps", defaultBootstraps, "bootstrap addresses (comma-separated)")
 	flag.StringVar(&flagALPN, "alpn", "http/1.1", "ALPN identifier for this service")

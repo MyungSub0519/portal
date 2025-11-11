@@ -4,70 +4,144 @@
   <img src="/portal.jpg" alt="Portal logo" width="540" />
 </p>
 
-Portal is a permissionless, open hosting network that transforms your local project into a public web endpoint. [See more.](https://gosuda.org/portal/)
+Portal is a secure, encrypted relay service that enables end-to-end encrypted communication between clients through a central relay server. It provides mutual authentication, forward secrecy, and secure connection management with cryptographic identity verification.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Features](#features)
-- [Quick Start](#quick-start)
 - [Architecture](#architecture)
+- [Security](#security)
+- [Installation](#installation)
+- [Usage](#usage)
+- [API Reference](#api-reference)
+- [Protocol Specification](#protocol-specification)
+- [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
 
 ## Overview
 
-Portal connects local applications to web users through a secure relay layer.
-Each application is assigned a subdomain within Portal, and all traffic between endpoints is end-to-end encrypted.
-This enables developers to publish local services globally without managing servers or cloud infrastructure.
+Portal implements a secure relay protocol that allows clients to register leases and establish encrypted connections through a central server. The system uses modern cryptographic primitives to ensure:
+
+- **End-to-end encryption**: All communication is encrypted using ChaCha20-Poly1305 AEAD
+- **Mutual authentication**: Ed25519 signatures verify client identities
+- **Forward secrecy**: Ephemeral X25519 key exchange per connection
+- **Secure relay**: The relay server cannot decrypt client communications
 
 ## Features
 
-- 🔄 **Connection Relay**: Connects clients behind NAT or firewalls through the Portal network.
-- 🔐 **End-to-End Encryption**: Fully encrypted client-to-client communication, including browser sessions via a WASM-based Service Worker proxy.
-- 🕊️ **Permissionless Hosting**: Anyone can open or choose their own Portal — no approval, no central authority.
+- 🔐 **End-to-End Encryption**: Client-to-client communication is fully encrypted
+- 🔑 **Cryptographic Identity**: Ed25519-based identity system with verifiable signatures
+- 🔄 **Connection Relay**: Secure connection forwarding through central server
+- ⏰ **Lease Management**: Time-based lease system with automatic cleanup
+- 🌐 **Protocol Support**: Application-Layer Protocol Negotiation (ALPN)
 - 🚀 **High Performance**: Multiplexed connections using yamux
-- ⚙️ **Simple Setup**: Build and bootstrap apps quickly using the Portal SDK or Tunnel client.
-
-## Quick Start
-You can run **Portal** to host relay services, or run **App** to publish your own application through portal.
-
-### Running the Portal Network
-Run Portal with Docker Compose:
-
-```bash
-# 1. Start services
-docker compose up
-
-# 2. Open in browser
-http://localhost:4017
-
-# 3. Domain setup (optional)
-# Point DNS to this server:
-#   A record for portal.example.com → server IP
-#   A (wildcard) for *.example.com (or *.portal.example.com) → server IP
-#
-# Then edit docker-compose.yml environment for your domain:
-PORTAL_UI_URL: https://yourservice.com
-POSTAL_FRONTEND_URL: https://*.yourservice.com
-BOOTSTRAP_URIS: wss://yourservice.com/relay
-
-```
-
-### Running a Portal App
-See [portal-toys](https://github.com/gosuda/portal-toys)
+- 🐳 **Docker Support**: Containerized deployment ready
+- 🌍 **Browser E2EE Proxy**: WASM-based Service Worker for automatic browser encryption
+- 📱 **Multi-Platform**: Go SDK for servers, WASM SDK for browsers
 
 ## Architecture
 
-For a detailed overview of system components and data flow, see the [architecture documentation](docs/architecture.md).
+### System Architecture
+
+```mermaid
+graph TB
+    subgraph "Client A"
+        CA[Client A]
+        CA --> CA_ID[Identity: Ed25519]
+        CA --> CA_LEASE[Lease Manager]
+    end
+
+    subgraph "Client B"
+        CB[Client B]
+        CB --> CB_ID[Identity: Ed25519]
+        CB --> CB_LEASE[Lease Manager]
+    end
+
+    subgraph "Relay Server"
+        RS[Relay Server]
+        RS --> RS_ID[Server Identity]
+        RS --> LM[Lease Manager]
+        RS --> CM[Connection Manager]
+        RS --> FH[Forwarding Handler]
+    end
+
+    CA -.->|1. Register Lease| RS
+    CB -.->|2. Register Lease| RS
+    CB -.->|3. Request Connection| RS
+    RS -.->|4. Forward Request| CA
+    CA -.->|5. Accept Connection| RS
+    RS -.->|6. Establish E2EE| CB
+
+    CA <-->|7. Encrypted Data| CB
+```
+
+### Component Architecture
+
+```mermaid
+graph LR
+    subgraph "Client Components"
+        C[RelayClient]
+        C --> H[Handshaker]
+        C --> LM[LeaseManager]
+        C --> SC[SecureConnection]
+    end
+
+    subgraph "Server Components"
+        S[RelayServer]
+        S --> LH[LeaseHandler]
+        S --> CH[ConnectionHandler]
+        S --> FH[ForwardingHandler]
+        S --> LM2[LeaseManager]
+    end
+
+    subgraph "Crypto Operations"
+        CO[CryptoOps]
+        CO --> CRED[Credential]
+        CO --> SIG[Signature]
+        CO --> E2EE[End-to-End Encryption]
+    end
+
+    C <-->|Protocol Messages| S
+    H --> CO
+    SC --> CO
+    LH --> LM2
+    CH --> FH
+```
+
+### Connection Flow
+
+```mermaid
+sequenceDiagram
+    participant C1 as Client 1
+    participant RS as Relay Server
+    participant C2 as Client 2
+
+    Note over C1,C2: Lease Registration Phase
+    C1->>RS: Register Lease (Identity, ALPN)
+    RS->>C1: Lease Confirmation
+
+    C2->>RS: Register Lease (Identity, ALPN)
+    RS->>C2: Lease Confirmation
+
+    Note over C1,C2: Connection Establishment Phase
+    C2->>RS: Request Connection (to Client 1)
+    RS->>C1: Forward Connection Request
+    C1->>RS: Accept Connection
+    RS->>C2: Connection Accepted
+
+    Note over C1,C2: Secure Handshake Phase
+    C2->>C1: X25519 Handshake (via relay)
+    C1->>C2: X25519 Response (via relay)
+
+    Note over C1,C2: End-to-End Encrypted Communication
+    C2->>C1: Encrypted Data (ChaCha20-Poly1305)
+    C1->>C2: Encrypted Data (ChaCha20-Poly1305)
+```
 
 ## Contributing
 
-We welcome contributions from the community!
-Before getting started, please check the [development guide](docs/development.md)
- for setup instructions and best practices.
-
-### Steps to Contribute
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'Add amazing feature'`)

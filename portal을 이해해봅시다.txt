@@ -1,0 +1,75 @@
+Portal에 대해 코드를 읽고 메모하면서 이해하려고 합니다.
+1.4.0 기준으로 작성했습니다.
+[메모 방식]
+아마도 진입점 부터 접하는 코드 순서대로 쭉 나열해서 씁니다.
+2025-11-08 7:36 큰 부분을 차지 하지 않는다 생각하는 부분은 과감히 안적겠다 마음먹음
+
+1. 진입점 /cmd/relay-server/main.go
+  - 포탈 config 설정 파싱함. L32~L67
+    - 스태틱 파일, 호스트, 포트, 부트스트랩, ALPN 등...
+      - 호스트 결정 로직 : PORTAL_UI_URL -> POSTAL_FRONTEND_URL -> 둘다 없으면 localhost
+    - 부트스트랩이란? 포탈 앱이 포탈과 연결을 맺을 수 있도록 노출시키는 웹소켓 주소
+      - 코드를 보니까 여러개로 부트스트랩을 노출시킬 수 있나봄 L70~L77
+  - 파싱한 config를 runServer()로 넘김
+    - staticDir, portalHost, portalUIURL, portalFrontendPattern, bootstrapURIs 등은 frontend.go에서 가져옴
+      - 아마 기본 값들로 localhost가 되어 있는 거 같음.
+  - cred := sdk.NewCredential() 호출 릴레이 서버가 사용할 새 암호 자격증명을 만듬 -> /sdk/sdk.go로 연결됨
+  - serv := portal.NewRelayServer(cred, flagBootstraps) 호출 -> /portal/relay.go로 연결됨
+  - serv.Start() 호출 -> LeaseManager.Start()도 호출함 -> ttlWorker() 고루틴 호출함
+    - 고루틴은 30초 주기로 만료된 Lease를 정리하는 로직으로 돌아감
+  - httpSrv := serveHTTP(ctx, fmt.Sprintf(":%d", flagPort), serv, cred.ID(), flagBootstraps, stop) 호출 -> /cmd/relay-server/view.go로 연결됨
+
+2. /sdk/sdk.go
+  - NewCredential() 함수 : 공개키, 개인키 만드는 애.
+    - cryptoops.NewCredential() 호출함 -> /protal/core/cryptoops/sig.go로 연결됨
+
+3. /protal/core/cryptoops/sig.go
+  - NewCredential() 함수 : 새로운 Ed25519 키쌍을 만듬.
+    - return NewCredentialFromPrivateKey(privateKey) 호출함
+  - NewCredentialFromPrivateKey() 함수 : 얘는 그냥 구조체로 만들어서 리턴해주는 애인듯?
+    - privateKey.Public()함수로 개인키에서 공개키 뽑아낼 수 있는 듯
+    - 구조체에 id라는 값으로 DeriveID(PublicKey) 호출해서 박음
+      - 그냥 유니크한 id를 로직에 따라 생성했다 정도로 이해 하면 될듯
+
+4. /portal/relay.go
+  - NewRelayServer() 함수 : RelayServer 구조체를 리턴함
+    - sdk.go에서 생성한 키쌍+id를 들고 있음
+    - address는 부트스트랩 주소임
+    - 그 외 커넥션이랑 lease를 관리하는 것 같음 -> NewLeaseManager() -> /portal/lease.go로 연결됨
+
+5. /protal/lease.go
+  - NewLeaseManager() 함수 : LeaseManager 구조체를 리턴함
+    - lease란? 사용자가 포탈 앱에 접속하기 위한 id -> 포탈 앱이 들고 있는 값이란 소리
+    - lease 외에도 ttlInterval이라는 라이프사이클 관리 값도 들고 있음.
+    - 포탈 서버에서 연결된 앱을 관리하기 위해 LeaseManager를 들고 있는 듯
+
+6. /cmd/reley-server/view.go
+  - serveHTTP() 함수 : 포탈 페이지 + 부트스트랩(웹소켓) + 서브도메인 기반 포탈 앱 스태틱 파일 등을 업로드, 책임짐
+    - /, /static/, /frontend/ : 포탈 메인 페이지 서빙 -> 실제 서빙되는 내용 상세는 /cmd/relay-server/frontend.go로 연결됨
+    - /relay : websocket 엔드포인트
+    - TODO : ServeHTTP() 계속 봐야함
+
+===============================================================
+
+번외. 주요 기능은 아닌데 신기했던거 + 추가 메모
+1. /cmd/relay-server/main.go
+  - ALPN은 지금은 사용하지 않는 거 같음 -> ALPN이 뭐고 나중에 검색해볼 것
+  - 찾아보니까 L65~66은 OS 신호 후킹하는 애 랍니다. 컨트롤+C 같은거 입력받으면 종료하도록 트리거 해놓은거라네요.
+
+3. /protal/core/cryptoops/sig.go
+  - Ed25519 개인키는 내부적으로 공개키 정보를 포함하고 있다고함.
+    - 처음 인자로 _를 쓰는 이유도 개인키가 공개키 정보를 담고 있으니 변수에 담아둘 필요가 없음
+    - _ <- 이걸 blank identifier라고 한다고함 
+      - main.go에도 있었네 range가 기본적으로 (index, value)로 줘서 index 필요 없으니 썻다캄
+  - DeriveID(PublicKey) 로직
+    - HMAC-SHA256을 계산해 공개키를 해싱 -> 바이트 배열에서 앞쪽 16바이트만 Base32로 인코딩해서 id로 사용
+  - NewCredentialFromPrivateKey()에서 Credential구조체, nil로 넘기길래 왜 그런가 했더니 리턴타입이 Credential, error 였음
+    - 아마 error면 != nil 같은걸로 에러 체크 할듯? -> try-catch가 없어서 자주쓰는 패턴인가
+
+5. /portal/lease.go
+  - lease가 뭔지 어디까지 책임지고 뭘 가지고 있는진 정확하게 모르겠음 -> 나중에 알아볼 것
+  - 왜 ttlInterval라는 값을 들고 있지? -> 아마 포탈 앱이 살아있는지 체킹하는 주기인듯? -> 아닐 수도 있음 나중에 나올듯
+
+번외2. 궁금한 점 
+1. PORTAL_UI_URL랑 POSTAL_FRONTEND_URL가 뭐임? 뭐가 다른거고 어떻게 쓰임새가 다른거지
+2. /sdk/sdk.go를 타고 /protal/core/cryptoops/sig.go로 가서 NewCredential()를 하는 이유? 그냥 바로 sig.go로 가면 안되나
